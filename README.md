@@ -1,8 +1,7 @@
 # epwebsite-analytics
 
-Click and time-on-page analytics pipeline for [epwebsite](../epwebsite), a portfolio site. The site itself is plain HTML/jQuery with no build step, so the goal here was a pipeline that a static site can talk to with a plain `fetch()`/`sendBeacon()` call — no AWS SDK, no credentials, nothing on the client beyond a POST request.
+Click and time-on-page analytics pipeline for [epwebsite](estebanperezart.com), a portfolio site. This data pipeline has been created with AWS data services such us Firehose and Athena.
 
-Everything below is provisioned with Terraform. QuickSight is the one exception — see the note at the bottom.
 
 ## Architecture
 
@@ -32,8 +31,8 @@ Why it's shaped this way:
 
 - **API Gateway + Lambda in front of Firehose, instead of the browser calling Kinesis directly.** Kinesis has a JS SDK and you can absolutely PutRecord from a browser using a Cognito unauthenticated identity pool, but that means shipping AWS credentials (even scoped-down ones) to anyone who opens dev tools. Going through API Gateway means the client only ever sees a plain HTTPS endpoint.
 - **Lambda writes to Firehose, not straight to S3.** Firehose batches records into files instead of writing one S3 object per click. A portfolio site isn't exactly high-traffic, but "one file per event" is still a bad habit — Athena scans get slower and more expensive as the object count grows, regardless of total data size.
-- **The Lambda is intentionally dumb.** It parses the JSON body, rejects anything malformed, adds a server-side timestamp (client clocks aren't trustworthy), and hands off to Firehose. No enrichment, no geo lookups, nothing fancy.
-- **Glue table is hand-written, not crawler-discovered.** I control the event schema (it's produced by `analytics.js` in the sibling repo), so there's nothing for a crawler to discover that I don't already know. Skipping it also avoids the classic crawler headache where it infers `bigint` from one file and `string` from another and Athena starts throwing type mismatch errors.
+
+- **Glue table is hand-written, not crawler-discovered.** I control the event schema (it's produced by `analytics.js` in the front end repo), so there's nothing for a crawler to discover that I don't already know. Skipping it also avoids the classic crawler headache where it infers `bigint` from one file and `string` from another and Athena starts throwing type mismatch errors.
 - **Partitions use projection, not `MSCK REPAIR TABLE` or a crawler run.** The table's `year`/`month`/`day` partitions are computed by Athena on the fly from the S3 prefix pattern. New partitions just work as soon as Firehose writes to them — nothing to run, nothing to keep in sync.
 
 ## Services
@@ -60,7 +59,7 @@ The frontend (`epwebsite/js/analytics.js`) batches events client-side and posts 
 
 Every event carries a common envelope — `event_id`, `visitor_id` / `session_id` (both random, stored in local/session storage), `page`, `path`, `collection_id`, `client_timestamp` plus a `server_timestamp` added by the Lambda, `referrer`, viewport size, and `user_agent`. On top of that, depending on the event type: `target_type`, `target_label`, `target_href`, `image_index`, `duration_ms`.
 
-## Data layer
+## Data structure (tables)
 
 `s3://<events-bucket>/events/year=.../month=.../day=.../*.gz` — newline-delimited JSON, gzip compressed. Each file can hold anywhere from one event to however many arrived in the same buffering window.
 
@@ -73,7 +72,7 @@ Four views live on top of the table (`sql/`, applied straight through Athena —
 - `avg_time_by_page` — average seconds spent per page (excludes work_detail's per-image segments)
 - `avg_time_by_image` — average seconds spent per artwork inside the viewer
 
-## Querying it
+## Making queries in Athena
 
 Console: Athena → Query editor → switch the workgroup dropdown to **`epwebsite-analytics`** (the default `primary` workgroup has no result location configured, so queries fail until you switch). Database is `epwebsite_analytics`.
 
@@ -88,15 +87,6 @@ from events
 where event_type = 'page_view'
 group by page
 order by views desc;
-```
-
-CLI works too:
-
-```bash
-aws athena start-query-execution \
-  --query-string "select * from top_images" \
-  --work-group epwebsite-analytics \
-  --query-execution-context Database=epwebsite_analytics
 ```
 
 ## Repo layout
@@ -120,5 +110,4 @@ Needs an AWS profile with admin-ish access (S3, Lambda, IAM, API Gateway, Fireho
 
 ## What's not done
 
-- **CORS is wide open** (`allow_origins = ["*"]`) because epwebsite doesn't have a fixed domain deployed yet. Tighten this in `infra/api_gateway.tf` once it does.
 - **QuickSight isn't wired up.** Deliberately kept out of Terraform — `aws_quicksight_account_subscription` exists but is known to be messy to tear down cleanly, and the console signup wizard auto-configures the S3/Athena IAM permissions for you, which would otherwise have to be hand-rolled. The data side (table + views) is ready for it whenever the subscription exists; only the data source resource itself would need a few lines of Terraform after that.
