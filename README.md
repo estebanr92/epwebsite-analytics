@@ -1,6 +1,6 @@
 # epwebsite-analytics
 
-Click and time-on-page analytics pipeline for [epwebsite](estebanperezart.com), a portfolio site. This data pipeline has been created with AWS data services such us Firehose and Athena.
+Click and time-on-page analytics pipeline for [epwebsite](estebanperezart.com), a portfolio site of plastic artist Esteban Pérez. This data pipeline has been created with AWS data services such us Firehose and Athena.
 
 
 ## Architecture
@@ -65,7 +65,7 @@ Every event carries a common envelope — `event_id`, `visitor_id` / `session_id
 
 Glue table `epwebsite_analytics.events` sits directly on top of that with an OpenX JSON SerDe. 18 columns total: the full event envelope plus every type-specific field, all nullable since no single event populates all of them.
 
-Four views live on top of the table (`sql/`, applied straight through Athena — `CREATE VIEW` doesn't need to go through Terraform to be reproducible, the SQL is the source of truth either way):
+Four views live on top of the table (`sql/`, applied straight through Athena — `CREATE VIEW` doesn't need to go through Terraform to be reproducible):
 
 - `daily_page_popularity` — page views per day, with a proper `date` column so grouping by week/month/quarter in a BI tool just works
 - `top_images` — view counts per artwork
@@ -108,6 +108,3 @@ terraform apply
 
 Needs an AWS profile with admin-ish access (S3, Lambda, IAM, API Gateway, Firehose, Glue, Athena, CloudWatch). Default profile/region live in `variables.tf` — override with `-var` or a `.tfvars` file if yours differ.
 
-## What's not done
-
-- **QuickSight isn't wired up.** Deliberately kept out of Terraform — `aws_quicksight_account_subscription` exists but is known to be messy to tear down cleanly, and the console signup wizard auto-configures the S3/Athena IAM permissions for you, which would otherwise have to be hand-rolled. The data side (table + views) is ready for it whenever the subscription exists; only the data source resource itself would need a few lines of Terraform after that.
